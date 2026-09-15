@@ -118,5 +118,36 @@ REST_FRAMEWORK = {
     },
 }
 
+# Without this, unhandled errors are silent when DEBUG=False — Django's
+# default logging only prints to console while DEBUG=True, and otherwise
+# just tries to email ADMINS (which we haven't configured). This makes
+# tracebacks show up in Render's (or any host's) log output instead of
+# vanishing, which is what was happening before this was added.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
+    },
+    "loggers": {
+        "django": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "django.request": {
+            "handlers": ["console"],
+            "level": "ERROR",
+            "propagate": False,
+        },
+    },
+}
+
 # yt-dlp needs ffmpeg on PATH to merge separate 4K video + audio streams.
 # Install it system-wide, e.g.: sudo apt install ffmpeg
