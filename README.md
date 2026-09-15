@@ -163,6 +163,24 @@ hitting `python manage.py cleanup_temp_downloads`, or a crontab entry if
 you're on a VM (`0 * * * * cd /path/to/backend && venv/bin/python manage.py
 cleanup_temp_downloads`).
 
+**If YouTube says "Sign in to confirm you're not a bot":**
+This is much more common once deployed than it was locally — YouTube flags
+requests from datacenter IPs (Render, AWS, etc.) far more aggressively than
+home connections. Fix it by giving yt-dlp cookies from a real logged-in
+YouTube session:
+1. Export cookies from your own browser while logged into youtube.com,
+   using an extension like "Get cookies.txt LOCALLY" (Chrome/Firefox) — it
+   produces a `cookies.txt` file in the format yt-dlp expects.
+2. On Render: your service → Environment → Secret Files → Add Secret File
+   → filename `cookies.txt`, paste the contents. Render mounts it at
+   `/etc/secrets/cookies.txt`.
+3. Set env var `YTDLP_COOKIES_FILE` = `/etc/secrets/cookies.txt`.
+4. Redeploy and retry.
+
+Only use cookies from your own account for content you're entitled to
+access — this file acts as your login, so treat it like a password (never
+commit it to git).
+
 **Alternative: your own server (more reliable, more setup)**
 Oracle Cloud's "Always Free" tier gives you a real ARM VM (no sleep, more
 RAM/CPU) you can install everything on yourself — Python, `ffmpeg`, Nginx,

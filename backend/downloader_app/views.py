@@ -14,6 +14,7 @@ import os
 import re
 import tempfile
 import uuid
+from urllib.parse import parse_qs, urlparse
 
 import yt_dlp
 from django.conf import settings
@@ -30,18 +31,58 @@ def _validate_youtube_url(url: str) -> bool:
     return bool(url) and bool(YOUTUBE_URL_RE.match(url.strip()))
 
 
+def _strip_playlist_param(url: str) -> str:
+    """
+    Reduce a URL like '...watch?v=XXXX&list=RDXXXX&index=3' down to just the
+    single video ('...watch?v=XXXX'). Without this, a URL carrying a
+    YouTube auto-generated 'Mix'/playlist id (list=RD...) can get routed to
+    yt-dlp's playlist/tab extractor instead of the single-video one, even
+    with noplaylist set, and that extractor path is far more likely to hit
+    YouTube-side errors unrelated to the actual video.
+    """
+    parsed = urlparse(url.strip())
+    if "youtu.be" in parsed.netloc:
+        # youtu.be/VIDEO_ID?... — path already is just the id, drop any query
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+    video_id = parse_qs(parsed.query).get("v", [None])[0]
+    if video_id:
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}?v={video_id}"
+    return url
+
+
 def _cookie_opts() -> dict:
     """
-    Optional: pull cookies from a browser you're already logged into YouTube
-    with, for videos that otherwise return "Please sign in" (age-restricted,
-    or YouTube's bot-check on some videos). Set YTDLP_COOKIES_BROWSER in your
-    environment, e.g. "chrome", "firefox", "edge", "brave" — only do this for
-    your own account and content you have rights to access.
+    Optional: authenticate yt-dlp's requests using cookies from a real
+    logged-in YouTube session. This is what YouTube's own "Sign in to
+    confirm you're not a bot" error message points to as the fix — it
+    happens far more often on datacenter IPs (Render, AWS, etc.) than on
+    home connections, so it's common in production even when it never
+    showed up locally.
+
+    Two ways to provide cookies, checked in this order:
+    1. YTDLP_COOKIES_FILE — path to a cookies.txt file (works anywhere,
+       including headless servers like Render — see README for how to
+       export one from your browser and upload it as a Render Secret File).
+    2. YTDLP_COOKIES_BROWSER — a browser name (e.g. "chrome", "firefox") to
+       read cookies directly from, for local development only; there's no
+       browser installed on a deployed server, so this won't do anything
+       there.
+
+    Only use your own account's cookies, for content you have rights to
+    access — never someone else's session or private/restricted content
+    that isn't yours.
     """
+    cookies_file = os.environ.get("YTDLP_COOKIES_FILE")
+    if cookies_file:
+        return {"cookiefile": cookies_file}
+
     browser = os.environ.get("YTDLP_COOKIES_BROWSER")
     if browser:
         return {"cookiesfrombrowser": (browser,)}
+
     return {}
+
 
 
 def _estimate_bytes(fmt: dict, duration) -> int | None:
@@ -88,10 +129,13 @@ def video_info(request):
     if not _validate_youtube_url(url):
         return Response({"error": "Please provide a valid YouTube URL."}, status=400)
 
+    url = _strip_playlist_param(url)
+
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
+        "noplaylist": True,
         **_cookie_opts(),
     }
 
@@ -198,6 +242,8 @@ def download_video(request):
         return Response({"error": "Please provide a valid YouTube URL."}, status=400)
     if not format_id:
         return Response({"error": "format_id is required."}, status=400)
+
+    url = _strip_playlist_param(url)
 
     os.makedirs(settings.MEDIA_ROOT, exist_ok=True)
     job_id = uuid.uuid4().hex
